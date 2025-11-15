@@ -20,52 +20,41 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        handleUser(session.user);
-      } else {
-        setCurrentUser(null);
-        setUserRole(null);
-        setUserData(null);
-        Cookies.remove('userSession');
-        setLoading(false);
-      }
-    });
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('Auth state changed:', event);
-      
-      if (session?.user) {
-        await handleUser(session.user);
-      } else {
-        setCurrentUser(null);
-        setUserRole(null);
-        setUserData(null);
-        Cookies.remove('userSession');
-        setLoading(false);
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
   const handleUser = async (user) => {
+    console.log('handleUser called for user:', user.id);
+    
     try {
+      console.log('Fetching user data from database...');
+      
       // Get user data from public.users table
       const { data, error } = await supabase
         .from('users')
         .select('*')
         .eq('id', user.id)
-        .single();
+        .maybeSingle();
 
-      if (error) throw error;
+      console.log('User data query result:', { data, error });
+
+      if (error) {
+        console.error('Error fetching user data:', error);
+        
+        // If it's a row level security error, the user might not have access
+        if (error.code === 'PGRST116' || error.message.includes('JSON object requested')) {
+          console.log('User not found in database, signing out...');
+          await supabase.auth.signOut();
+        }
+        
+        setCurrentUser(null);
+        setUserRole(null);
+        setUserData(null);
+        Cookies.remove('userSession');
+        setLoading(false);
+        return;
+      }
 
       if (data) {
+        console.log('User data loaded successfully:', data.email);
+        
         // Check email verification status from both auth and database
         const isEmailVerified = !!user.email_confirmed_at;
         
@@ -92,7 +81,10 @@ export const AuthProvider = ({ children }) => {
 
         // Set cookie for session management
         Cookies.set('userSession', user.id, { expires: 7 });
+        
+        console.log('User state updated successfully');
       } else {
+        console.log('No user data found, signing out...');
         // User document doesn't exist, sign them out
         await supabase.auth.signOut();
         setCurrentUser(null);
@@ -101,12 +93,56 @@ export const AuthProvider = ({ children }) => {
         Cookies.remove('userSession');
       }
     } catch (error) {
-      console.error('Error in auth state change:', error);
+      console.error('Error in handleUser:', error);
       setError(error.message);
+      // Make sure to set loading to false even on error
+      setCurrentUser(null);
+      setUserRole(null);
+      setUserData(null);
     } finally {
+      console.log('Setting loading to false');
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    let mounted = true;
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('Auth state changed:', event);
+      
+      if (!mounted) return;
+
+      if (event === 'INITIAL_SESSION') {
+        // This fires first on page load
+        if (session?.user) {
+          console.log('Initial session found, loading user data...');
+          await handleUser(session.user);
+        } else {
+          console.log('No initial session');
+          setLoading(false);
+        }
+      } else if (event === 'SIGNED_IN') {
+        await handleUser(session.user);
+      } else if (event === 'SIGNED_OUT') {
+        setCurrentUser(null);
+        setUserRole(null);
+        setUserData(null);
+        setUnverifiedUser(null);
+        Cookies.remove('userSession');
+        setLoading(false);
+      } else if (event === 'TOKEN_REFRESHED') {
+        // Session refreshed, user data should still be valid
+        console.log('Token refreshed');
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   // Refresh user data
   const refreshUserData = async () => {
