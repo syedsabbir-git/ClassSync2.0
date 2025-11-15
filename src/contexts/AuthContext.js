@@ -128,6 +128,7 @@ export const AuthProvider = ({ children }) => {
     let mounted = true;
     let sessionHandled = false;
     let initialLoadComplete = false;
+    let isPageLoad = true; // Track if this is the initial page load
 
     // Listen for auth changes (includes INITIAL_SESSION event on mount)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -138,10 +139,11 @@ export const AuthProvider = ({ children }) => {
       // On page load, only handle INITIAL_SESSION (ignore SIGNED_IN that comes first)
       if (event === 'INITIAL_SESSION') {
         initialLoadComplete = true;
-        sessionHandled = true;
+        isPageLoad = false; // Page load is complete
         
         if (session?.user) {
           console.log('Initial session found, loading user data...');
+          sessionHandled = true;
           await handleUser(session.user);
         } else {
           console.log('No session');
@@ -149,16 +151,26 @@ export const AuthProvider = ({ children }) => {
         }
       } else if (event === 'SIGNED_IN') {
         // Only handle SIGNED_IN after initial load is complete (actual login)
-        if (initialLoadComplete && !sessionHandled) {
+        if (initialLoadComplete && !sessionHandled && session?.user) {
           sessionHandled = true;
           console.log('User signed in, loading user data...');
           await handleUser(session.user);
-        } else if (!initialLoadComplete) {
+        } else if (isPageLoad && !initialLoadComplete) {
+          // Ignore SIGNED_IN only during initial page load before INITIAL_SESSION
           console.log('Ignoring SIGNED_IN during initial load, waiting for INITIAL_SESSION...');
+        } else if (!isPageLoad && !sessionHandled && session?.user) {
+          // Handle SIGNED_IN after logout (not during page load)
+          sessionHandled = true;
+          console.log('User signed in after logout, loading user data...');
+          await handleUser(session.user);
+        } else if (sessionHandled) {
+          console.log('Session already handled, skipping...');
         }
       } else if (event === 'SIGNED_OUT') {
+        console.log('User signed out, resetting auth state...');
         sessionHandled = false;
         initialLoadComplete = false;
+        // Don't reset isPageLoad - we know we're not on initial page load anymore
         setCurrentUser(null);
         setUserRole(null);
         setUserData(null);

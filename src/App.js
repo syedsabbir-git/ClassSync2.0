@@ -64,6 +64,7 @@ function AppRouter() {
         }
       } else {
         setCheckingSection(false);
+        setHasSection(false);
       }
     };
 
@@ -82,8 +83,8 @@ function AppRouter() {
     setHasSection(true);
   };
 
-  // Show loading while checking authentication or sections
-  if (loading || checkingSection) {
+  // Show loading only while checking authentication (not sections)
+  if (loading || (currentUser && checkingSection)) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center">
         <div className="text-center">
