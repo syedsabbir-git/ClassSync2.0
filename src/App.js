@@ -1,6 +1,7 @@
-// src/App.js - Updated to use Unified Dashboard with OneSignal and Email Verification
+// src/App.js - Updated with React Router for proper page refresh handling
 
 import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LandingPage from './pages/LandingPage';
 import CreateSection from './pages/CreateSection';
@@ -10,6 +11,24 @@ import EmailVerification from './pages/EmailVerification';
 import InstallPWA from './components/InstallPWA';
 import sectionService from './services/sectionService';
 import oneSignalService from './services/oneSignalService';
+
+// Protected Route Component
+function ProtectedRoute({ children }) {
+  const { currentUser, loading } = useAuth();
+  
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+  
+  return currentUser ? children : <Navigate to="/" replace />;
+}
 
 // Main App Router Component
 function AppRouter() {
@@ -75,50 +94,98 @@ function AppRouter() {
     );
   }
 
-  // Routing logic based on authentication and user state
   return (
-    <>
-      {/* PWA Install Banner - shows on all pages */}
+    <Router>
       <InstallPWA />
       
-      {(() => {
-        // Unverified user (tried to login but email not verified) - show verification page
-        if (unverifiedUser && !currentUser) {
-          return <EmailVerification onVerified={() => {
-            setUnverifiedUser(null);
-            window.location.reload();
-          }} />;
-        }
+      <Routes>
+        {/* Public Route - Landing Page */}
+        <Route 
+          path="/" 
+          element={
+            currentUser ? (
+              userData?.email_verified === false ? (
+                <Navigate to="/verify-email" replace />
+              ) : userRole === 'cr' && !hasSection ? (
+                <Navigate to="/create-section" replace />
+              ) : userRole === 'student' && !hasSection ? (
+                <Navigate to="/enroll-section" replace />
+              ) : (
+                <Navigate to="/dashboard" replace />
+              )
+            ) : (
+              <LandingPage onAuthSuccess={handleAuthSuccess} />
+            )
+          } 
+        />
 
-        // Not authenticated - show landing page
-        if (!currentUser) {
-          return <LandingPage onAuthSuccess={handleAuthSuccess} />;
-        }
+        {/* Email Verification Route */}
+        <Route 
+          path="/verify-email" 
+          element={
+            unverifiedUser && !currentUser ? (
+              <EmailVerification onVerified={() => {
+                setUnverifiedUser(null);
+                window.location.reload();
+              }} />
+            ) : currentUser && userData && !userData.email_verified ? (
+              <EmailVerification onVerified={refreshUserData} />
+            ) : (
+              <Navigate to="/" replace />
+            )
+          } 
+        />
 
-        // Authenticated but email not verified - show email verification page
-        if (currentUser && userData && !userData.email_verified) {
-          return <EmailVerification onVerified={refreshUserData} />;
-        }
+        {/* Create Section Route - CR only */}
+        <Route 
+          path="/create-section" 
+          element={
+            <ProtectedRoute>
+              {userRole === 'cr' && !hasSection ? (
+                <CreateSection onSectionCreated={handleSectionCreated} />
+              ) : (
+                <Navigate to="/dashboard" replace />
+              )}
+            </ProtectedRoute>
+          } 
+        />
 
-        // Authenticated CR without section - show create section page
-        if (userRole === 'cr' && !hasSection) {
-          return <CreateSection onSectionCreated={handleSectionCreated} />;
-        }
+        {/* Enroll Section Route - Student only */}
+        <Route 
+          path="/enroll-section" 
+          element={
+            <ProtectedRoute>
+              {userRole === 'student' && !hasSection ? (
+                <EnrollSection onEnrollmentSuccess={handleEnrollmentSuccess} />
+              ) : (
+                <Navigate to="/dashboard" replace />
+              )}
+            </ProtectedRoute>
+          } 
+        />
 
-        // Authenticated Student without section - show enroll page
-        if (userRole === 'student' && !hasSection) {
-          return <EnrollSection onEnrollmentSuccess={handleEnrollmentSuccess} />;
-        }
+        {/* Dashboard Route - All authenticated users with sections */}
+        <Route 
+          path="/dashboard/*" 
+          element={
+            <ProtectedRoute>
+              {(userRole === 'cr' || userRole === 'student') && hasSection ? (
+                <Dashboard />
+              ) : userRole === 'cr' && !hasSection ? (
+                <Navigate to="/create-section" replace />
+              ) : userRole === 'student' && !hasSection ? (
+                <Navigate to="/enroll-section" replace />
+              ) : (
+                <Navigate to="/" replace />
+              )}
+            </ProtectedRoute>
+          } 
+        />
 
-        // Authenticated user with sections - show unified dashboard
-        if ((userRole === 'cr' || userRole === 'student') && hasSection) {
-          return <Dashboard />;
-        }
-
-        // Fallback
-        return <LandingPage onAuthSuccess={handleAuthSuccess} />;
-      })()}
-    </>
+        {/* Catch all - redirect to home */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Router>
   );
 }
 

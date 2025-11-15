@@ -26,12 +26,32 @@ export const AuthProvider = ({ children }) => {
     try {
       console.log('Fetching user data from database...');
       
-      // Get user data from public.users table
-      const { data, error } = await supabase
+      // Add a race condition with timeout
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Query timeout')), 5000);
+      });
+      
+      const queryPromise = supabase
         .from('users')
         .select('*')
         .eq('id', user.id)
         .maybeSingle();
+      
+      let data, error;
+      
+      try {
+        const result = await Promise.race([queryPromise, timeoutPromise]);
+        data = result.data;
+        error = result.error;
+      } catch (timeoutError) {
+        console.error('Query timed out, this may be a localhost issue');
+        console.log('IMPORTANT: If on localhost, try accessing via your network IP instead (e.g., http://192.168.0.110:3000)');
+        
+        // Set loading to false after timeout
+        setLoading(false);
+        setError('Database connection timeout. Please try refreshing or use network IP address.');
+        return;
+      }
 
       console.log('User data query result:', { data, error });
 
@@ -95,7 +115,6 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Error in handleUser:', error);
       setError(error.message);
-      // Make sure to set loading to false even on error
       setCurrentUser(null);
       setUserRole(null);
       setUserData(null);
@@ -107,25 +126,39 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     let mounted = true;
+    let sessionHandled = false;
+    let initialLoadComplete = false;
 
-    // Listen for auth changes
+    // Listen for auth changes (includes INITIAL_SESSION event on mount)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('Auth state changed:', event);
       
       if (!mounted) return;
 
+      // On page load, only handle INITIAL_SESSION (ignore SIGNED_IN that comes first)
       if (event === 'INITIAL_SESSION') {
-        // This fires first on page load
+        initialLoadComplete = true;
+        sessionHandled = true;
+        
         if (session?.user) {
           console.log('Initial session found, loading user data...');
           await handleUser(session.user);
         } else {
-          console.log('No initial session');
+          console.log('No session');
           setLoading(false);
         }
       } else if (event === 'SIGNED_IN') {
-        await handleUser(session.user);
+        // Only handle SIGNED_IN after initial load is complete (actual login)
+        if (initialLoadComplete && !sessionHandled) {
+          sessionHandled = true;
+          console.log('User signed in, loading user data...');
+          await handleUser(session.user);
+        } else if (!initialLoadComplete) {
+          console.log('Ignoring SIGNED_IN during initial load, waiting for INITIAL_SESSION...');
+        }
       } else if (event === 'SIGNED_OUT') {
+        sessionHandled = false;
+        initialLoadComplete = false;
         setCurrentUser(null);
         setUserRole(null);
         setUserData(null);
@@ -133,13 +166,21 @@ export const AuthProvider = ({ children }) => {
         Cookies.remove('userSession');
         setLoading(false);
       } else if (event === 'TOKEN_REFRESHED') {
-        // Session refreshed, user data should still be valid
         console.log('Token refreshed');
       }
     });
 
+    // Safety timeout - only if session hasn't been handled after 15 seconds
+    const safetyTimeout = setTimeout(() => {
+      if (!sessionHandled && mounted && loading) {
+        console.warn('Auth initialization timeout - no session event received');
+        setLoading(false);
+      }
+    }, 15000);
+
     return () => {
       mounted = false;
+      clearTimeout(safetyTimeout);
       subscription.unsubscribe();
     };
   }, []);

@@ -20,6 +20,19 @@
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
     
     <title>ClassSync</title>
+    
+    <!-- Clear stale auth loading states on page load -->
+    <script>
+      try {
+        const authLoading = localStorage.getItem('auth_loading');
+        if (authLoading === 'true') {
+          console.log('Clearing stuck auth_loading state');
+          localStorage.removeItem('auth_loading');
+        }
+      } catch (e) {
+        console.error('Error clearing stale state:', e);
+      }
+    </script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
