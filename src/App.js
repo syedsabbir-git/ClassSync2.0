@@ -1,4 +1,4 @@
-// src/App.js - Updated to use Unified Dashboard with PWA Install Banner and FCM
+// src/App.js - Updated to use Unified Dashboard with OneSignal and Email Verification
 
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -6,40 +6,23 @@ import LandingPage from './pages/LandingPage';
 import CreateSection from './pages/CreateSection';
 import EnrollSection from './pages/EnrollSection';
 import Dashboard from './pages/Dashboard';
+import EmailVerification from './pages/EmailVerification';
 import InstallPWA from './components/InstallPWA';
 import sectionService from './services/sectionService';
-import { setupForegroundListener, isFCMSupported } from './services/fcmService';
+import oneSignalService from './services/oneSignalService';
 
 // Main App Router Component
 function AppRouter() {
-  const { currentUser, userRole, userData, loading } = useAuth();
+  const { currentUser, userRole, userData, unverifiedUser, setUnverifiedUser, loading, refreshUserData } = useAuth();
   const [hasSection, setHasSection] = useState(false);
   const [checkingSection, setCheckingSection] = useState(true);
 
-  // Initialize FCM when app loads
+  // Initialize OneSignal when app loads
   useEffect(() => {
-    if (isFCMSupported()) {
-      console.log('Initializing FCM...');
-      
-      // Set up foreground message listener
-      setupForegroundListener((payload) => {
-        console.log('Received foreground notification:', payload);
-        
-        // Handle foreground notifications in your app
-        // You can show a toast/alert or update notification state here
-        if (payload.notification) {
-          // Optional: Show custom in-app notification
-          console.log('New notification:', {
-            title: payload.notification.title,
-            body: payload.notification.body
-          });
-        }
-      });
-      
-      console.log('FCM initialized successfully');
-    } else {
-      console.log('FCM not supported in this browser');
-    }
+    // Temporarily disabled to debug infinite refresh
+    // console.log('Initializing OneSignal...');
+    // oneSignalService.initialize();
+    // console.log('OneSignal initialized successfully');
   }, []); // Run once when app loads
 
   // Check if user has sections when authenticated
@@ -99,9 +82,22 @@ function AppRouter() {
       <InstallPWA />
       
       {(() => {
+        // Unverified user (tried to login but email not verified) - show verification page
+        if (unverifiedUser && !currentUser) {
+          return <EmailVerification onVerified={() => {
+            setUnverifiedUser(null);
+            window.location.reload();
+          }} />;
+        }
+
         // Not authenticated - show landing page
         if (!currentUser) {
           return <LandingPage onAuthSuccess={handleAuthSuccess} />;
+        }
+
+        // Authenticated but email not verified - show email verification page
+        if (currentUser && userData && !userData.email_verified) {
+          return <EmailVerification onVerified={refreshUserData} />;
         }
 
         // Authenticated CR without section - show create section page

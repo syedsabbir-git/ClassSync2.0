@@ -4,6 +4,7 @@ import authService from '../services/authService';
 export const useAuthActions = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [unverifiedUserInfo, setUnverifiedUserInfo] = useState(null);
 
   const signUp = async (userData) => {
     setLoading(true);
@@ -25,10 +26,18 @@ export const useAuthActions = () => {
   const signIn = async (credentials) => {
     setLoading(true);
     setError(null);
+    setUnverifiedUserInfo(null);
     try {
       const result = await authService.signIn(credentials);
       if (!result.success) {
         setError(result.error);
+        // If email not verified, store user info for verification page
+        if (result.needsEmailVerification) {
+          setUnverifiedUserInfo({
+            email: result.userEmail,
+            name: result.userName
+          });
+        }
       }
       return result;
     } catch (error) {
@@ -80,6 +89,7 @@ export const useAuthActions = () => {
     resetPassword,
     loading,
     error,
+    unverifiedUserInfo,
     clearError: () => setError(null)
   };
 };

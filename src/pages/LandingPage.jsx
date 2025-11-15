@@ -43,8 +43,15 @@ const LandingPage = ({ onAuthSuccess }) => {
   const [validationErrors, setValidationErrors] = useState({});
   const [successMessage, setSuccessMessage] = useState('');
 
-  const { signUp, signIn, resetPassword, loading, error, clearError } = useAuthActions();
-  const { currentUser, userRole, userData } = useAuth();
+  const { signUp, signIn, resetPassword, loading, error, clearError, unverifiedUserInfo } = useAuthActions();
+  const { currentUser, userRole, userData, setUnverifiedUser } = useAuth();
+
+  // If there's unverified user info, set it in AuthContext
+  useEffect(() => {
+    if (unverifiedUserInfo) {
+      setUnverifiedUser(unverifiedUserInfo);
+    }
+  }, [unverifiedUserInfo, setUnverifiedUser]);
 
   // Rest of your existing handlers...
   const handleInputChange = (e) => {

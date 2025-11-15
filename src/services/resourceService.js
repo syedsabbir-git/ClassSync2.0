@@ -1,9 +1,9 @@
-// src/services/resourceService.js
+// src/services/resourceService.js - Supabase version (already migrated)
 import { supabase } from '../config/supabase';
 
 const resourceService = {
   // Upload PDF to Supabase Storage (10MB limit)
-  async uploadPDF(file, filename) {
+  async uploadPDF(file, filename, uploaderId, uploaderName) {
     try {
       // Check file size (10MB limit)
       if (file.size > 10 * 1024 * 1024) {
@@ -12,7 +12,7 @@ const resourceService = {
 
       const fileExt = file.name.split('.').pop();
       const fileName = `${filename.replace(/[^a-zA-Z0-9]/g, '_')}.${fileExt}`;
-      const filePath = `pdfs/${Date.now()}-${fileName}`;
+      const filePath = `pdfs/${uploaderId}/${Date.now()}-${fileName}`;
 
       const { data, error } = await supabase.storage
         .from('resources')
@@ -41,9 +41,19 @@ const resourceService = {
   // Create new resource
   async createResource(resourceData) {
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('resources')
-        .insert([resourceData])
+        .insert([{
+          uploader_id: resourceData.uploaderId,
+          uploader_name: resourceData.uploaderName,
+          title: resourceData.title,
+          description: resourceData.description || null,
+          course: resourceData.course,
+          topic: resourceData.topic,
+          type: resourceData.type,
+          url: resourceData.url,
+          thumbnail_url: resourceData.thumbnailUrl || null
+        }])
         .select()
         .single();
 
@@ -52,7 +62,7 @@ const resourceService = {
         return { success: false, error: error.message };
       }
 
-      return { success: true, resource: data };
+      return { success: true };
     } catch (error) {
       console.error('Create resource error:', error);
       return { success: false, error: 'Failed to create resource' };
@@ -85,7 +95,23 @@ const resourceService = {
         return { success: false, error: error.message };
       }
 
-      return { success: true, resources: data || [] };
+      // Format data
+      const resources = data.map(r => ({
+        id: r.id,
+        uploaderId: r.uploader_id,
+        uploaderName: r.uploader_name,
+        title: r.title,
+        description: r.description,
+        course: r.course,
+        topic: r.topic,
+        type: r.type,
+        url: r.url,
+        thumbnailUrl: r.thumbnail_url,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at
+      }));
+
+      return { success: true, resources };
     } catch (error) {
       console.error('Get resources error:', error);
       return { success: false, error: 'Failed to fetch resources' };
@@ -104,8 +130,8 @@ const resourceService = {
         return { success: false, error: error.message };
       }
 
-      const courses = [...new Set(data.map(item => item.course))].sort();
-      const topics = [...new Set(data.map(item => item.topic))].sort();
+      const courses = [...new Set(data.map(item => item.course))].filter(Boolean).sort();
+      const topics = [...new Set(data.map(item => item.topic))].filter(Boolean).sort();
 
       return { success: true, courses, topics };
     } catch (error) {

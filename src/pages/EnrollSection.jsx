@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Key, BookOpen, ArrowRight, Loader, CheckCircle, LogOut } from 'lucide-react';
 import sectionService from '../services/sectionService';
-import { requestFCMPermission } from '../services/fcmService';
+import oneSignalService from '../services/oneSignalService';
+import notificationService from '../services/notificationService';
 import { useAuth } from '../contexts/AuthContext';
 import authService from '../services/authService';
 
@@ -40,16 +41,35 @@ const EnrollSection = ({ onEnrollmentSuccess }) => {
     setError('');
 
     try {
-      const fcmToken = await requestFCMPermission()
+      // First enroll the student
       const result = await sectionService.enrollInSection({
         studentId: userData.uid,
         studentName: userData.name,
-        sectionKey: sectionKey,
-        fcmToken: fcmToken
+        sectionKey: sectionKey
       });
 
       if (result.success) {
         setEnrolledSection(result.sectionData);
+        
+        // Request OneSignal permission and subscribe to section
+        const subscriptionResult = await oneSignalService.requestPermissionAndSubscribe(
+          userData.uid,
+          result.sectionData.id
+        );
+
+        // Save subscription if successful
+        if (subscriptionResult.success && subscriptionResult.playerId) {
+          await notificationService.saveOneSignalSubscription(
+            userData.uid,
+            result.sectionData.id,
+            subscriptionResult.playerId
+          );
+          console.log('OneSignal subscription saved successfully');
+        } else {
+          console.log('OneSignal permission denied or failed:', subscriptionResult.error);
+          // Don't fail enrollment if notification permission is denied
+        }
+        
         // Auto-redirect to dashboard after 3 seconds
         setTimeout(() => {
           onEnrollmentSuccess && onEnrollmentSuccess(result.sectionData);
@@ -58,6 +78,7 @@ const EnrollSection = ({ onEnrollmentSuccess }) => {
         setError(result.error);
       }
     } catch (error) {
+      console.error('Enrollment error:', error);
       setError('An error occurred. Please try again.');
     } finally {
       setLoading(false);

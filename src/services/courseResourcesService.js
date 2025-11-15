@@ -1,22 +1,9 @@
-// src/services/courseResourcesService.js - Fixed to prevent duplicate resources
-import {
-  collection,
-  doc,
-  setDoc,
-  getDoc,
-  getDocs,
-  query,
-  where,
-  orderBy,
-  updateDoc,
-  deleteDoc,
-  serverTimestamp
-} from 'firebase/firestore';
-import { db } from '../config/firebase';
+// src/services/courseResourcesService.js - Migrated to Supabase
+import { supabase } from '../config/supabase';
 
 class CourseResourcesService {
   constructor() {
-    this.resourcesCollection = 'courseResources';
+    this.tableName = 'course_resources';
   }
 
   // CREATE new course resource
@@ -29,30 +16,45 @@ class CourseResourcesService {
       const resourceId = `${sectionId}_${cleanCourseCode}`;
 
       // Check if resource already exists
-      const existingDoc = await getDoc(doc(db, this.resourcesCollection, resourceId));
-      if (existingDoc.exists()) {
+      const { data: existingResource, error: checkError } = await supabase
+        .from(this.tableName)
+        .select('id')
+        .eq('id', resourceId)
+        .single();
+
+      if (existingResource) {
         return { success: false, error: 'Course resource already exists. Use update instead.' };
       }
 
+      // Prepare resource data
       const resourceData = {
         id: resourceId,
-        sectionId: sectionId,
-        crId: crId,
-        courseCode: courseCode.trim(),
-        courseName: courseName.trim(),
-        telegramLink: telegramLink.trim() || '',
-        whatsappLink: whatsappLink.trim() || '',
-        blcLink: blcLink.trim() || '',
-        enrollmentKey: enrollmentKey.trim() || '',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
+        section_id: sectionId,
+        cr_id: crId,
+        course_code: courseCode.trim(),
+        course_name: courseName.trim(),
+        telegram_link: telegramLink.trim() || null,
+        whatsapp_link: whatsappLink.trim() || null,
+        blc_link: blcLink.trim() || null,
+        enrollment_key: enrollmentKey.trim() || null
       };
 
-      const resourceRef = doc(db, this.resourcesCollection, resourceId);
-      await setDoc(resourceRef, resourceData);
+      const { data, error } = await supabase
+        .from(this.tableName)
+        .insert([resourceData])
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Supabase error creating course resource:', error);
+        return { success: false, error: this.getErrorMessage(error) };
+      }
 
       console.log('Course resource created successfully');
-      return { success: true, resource: resourceData };
+      return { 
+        success: true, 
+        resource: this.formatResource(data)
+      };
 
     } catch (error) {
       console.error('Error creating course resource:', error);
@@ -66,34 +68,49 @@ class CourseResourcesService {
       console.log('Updating course resource:', resourceId, updateData);
 
       // Check if resource exists
-      const resourceRef = doc(db, this.resourcesCollection, resourceId);
-      const existingDoc = await getDoc(resourceRef);
+      const { data: existingResource, error: checkError } = await supabase
+        .from(this.tableName)
+        .select('id')
+        .eq('id', resourceId)
+        .single();
       
-      if (!existingDoc.exists()) {
+      if (!existingResource) {
         return { success: false, error: 'Course resource not found' };
       }
 
-      const cleanUpdateData = {
-        courseName: updateData.courseName?.trim() || '',
-        telegramLink: updateData.telegramLink?.trim() || '',
-        whatsappLink: updateData.whatsappLink?.trim() || '',
-        blcLink: updateData.blcLink?.trim() || '',
-        enrollmentKey: updateData.enrollmentKey?.trim() || '',
-        updatedAt: serverTimestamp()
-      };
-
-      // Only update fields that are provided
+      // Prepare update data (only include fields that are provided)
       const fieldsToUpdate = {};
-      Object.keys(cleanUpdateData).forEach(key => {
-        if (cleanUpdateData[key] !== undefined) {
-          fieldsToUpdate[key] = cleanUpdateData[key];
-        }
-      });
+      
+      if (updateData.courseName !== undefined) {
+        fieldsToUpdate.course_name = updateData.courseName.trim();
+      }
+      if (updateData.telegramLink !== undefined) {
+        fieldsToUpdate.telegram_link = updateData.telegramLink.trim() || null;
+      }
+      if (updateData.whatsappLink !== undefined) {
+        fieldsToUpdate.whatsapp_link = updateData.whatsappLink.trim() || null;
+      }
+      if (updateData.blcLink !== undefined) {
+        fieldsToUpdate.blc_link = updateData.blcLink.trim() || null;
+      }
+      if (updateData.enrollmentKey !== undefined) {
+        fieldsToUpdate.enrollment_key = updateData.enrollmentKey.trim() || null;
+      }
 
-      await updateDoc(resourceRef, fieldsToUpdate);
+      const { data, error } = await supabase
+        .from(this.tableName)
+        .update(fieldsToUpdate)
+        .eq('id', resourceId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Supabase error updating course resource:', error);
+        return { success: false, error: this.getErrorMessage(error) };
+      }
 
       console.log('Course resource updated successfully');
-      return { success: true };
+      return { success: true, resource: this.formatResource(data) };
 
     } catch (error) {
       console.error('Error updating course resource:', error);
@@ -138,22 +155,23 @@ class CourseResourcesService {
   // Get course resource by ID
   async getCourseResourceById(resourceId) {
     try {
-      const resourceRef = doc(db, this.resourcesCollection, resourceId);
-      const resourceDoc = await getDoc(resourceRef);
+      const { data, error } = await supabase
+        .from(this.tableName)
+        .select('*')
+        .eq('id', resourceId)
+        .single();
 
-      if (!resourceDoc.exists()) {
-        return { success: false, error: 'Resource not found' };
+      if (error) {
+        if (error.code === 'PGRST116') {
+          return { success: false, error: 'Resource not found' };
+        }
+        console.error('Supabase error getting course resource:', error);
+        return { success: false, error: this.getErrorMessage(error) };
       }
 
-      const data = resourceDoc.data();
       return {
         success: true,
-        resource: {
-          ...data,
-          id: resourceDoc.id,
-          createdAt: data.createdAt?.toDate()?.toISOString() || data.createdAt,
-          updatedAt: data.updatedAt?.toDate()?.toISOString() || data.updatedAt
-        }
+        resource: this.formatResource(data)
       };
 
     } catch (error) {
@@ -171,24 +189,18 @@ class CourseResourcesService {
         return { success: true, resources: [] };
       }
 
-      const q = query(
-        collection(db, this.resourcesCollection),
-        where('sectionId', '==', sectionId),
-        orderBy('courseCode', 'asc')
-      );
+      const { data, error } = await supabase
+        .from(this.tableName)
+        .select('*')
+        .eq('section_id', sectionId)
+        .order('course_code', { ascending: true });
 
-      const querySnapshot = await getDocs(q);
-      const resources = [];
+      if (error) {
+        console.error('Supabase error getting course resources:', error);
+        return { success: false, error: this.getErrorMessage(error), resources: [] };
+      }
 
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        resources.push({
-          ...data,
-          id: doc.id,
-          createdAt: data.createdAt?.toDate()?.toISOString() || data.createdAt,
-          updatedAt: data.updatedAt?.toDate()?.toISOString() || data.updatedAt
-        });
-      });
+      const resources = data.map(resource => this.formatResource(resource));
 
       console.log('Found course resources:', resources.length);
       return { success: true, resources };
@@ -204,15 +216,26 @@ class CourseResourcesService {
     try {
       console.log('Deleting course resource:', resourceId);
 
-      const resourceRef = doc(db, this.resourcesCollection, resourceId);
-      
       // Check if resource exists before deleting
-      const existingDoc = await getDoc(resourceRef);
-      if (!existingDoc.exists()) {
+      const { data: existingResource, error: checkError } = await supabase
+        .from(this.tableName)
+        .select('id')
+        .eq('id', resourceId)
+        .single();
+      
+      if (!existingResource) {
         return { success: false, error: 'Resource not found' };
       }
 
-      await deleteDoc(resourceRef);
+      const { error } = await supabase
+        .from(this.tableName)
+        .delete()
+        .eq('id', resourceId);
+
+      if (error) {
+        console.error('Supabase error deleting course resource:', error);
+        return { success: false, error: this.getErrorMessage(error) };
+      }
 
       console.log('Course resource deleted successfully');
       return { success: true };
@@ -223,17 +246,39 @@ class CourseResourcesService {
     }
   }
 
+  // Format resource from database format to frontend format
+  formatResource(data) {
+    if (!data) return null;
+
+    return {
+      id: data.id,
+      sectionId: data.section_id,
+      crId: data.cr_id,
+      courseCode: data.course_code,
+      courseName: data.course_name,
+      telegramLink: data.telegram_link || '',
+      whatsappLink: data.whatsapp_link || '',
+      blcLink: data.blc_link || '',
+      enrollmentKey: data.enrollment_key || '',
+      createdAt: data.created_at,
+      updatedAt: data.updated_at
+    };
+  }
+
+  // Error handling
   getErrorMessage(error) {
     if (error.code) {
       switch (error.code) {
-        case 'permission-denied':
+        case 'PGRST116':
+          return 'Resource not found';
+        case '23505':
+          return 'A course resource with this code already exists';
+        case '23503':
+          return 'Invalid section or CR reference';
+        case '42501':
           return 'Permission denied. Please make sure you are logged in and have the right permissions.';
-        case 'not-found':
-          return 'The requested data was not found.';
-        case 'unavailable':
-          return 'Service is temporarily unavailable. Please try again later.';
         default:
-          return `An error occurred: ${error.message || 'Unknown error'}`;
+          return `Database error: ${error.message || 'Unknown error'}`;
       }
     }
     return error.message || 'An unexpected error occurred. Please try again.';

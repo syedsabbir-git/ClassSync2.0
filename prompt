@@ -1,0 +1,35 @@
+You are an expert senior developer helping me migrate a full React
+from Firebase to Supabase.
+
+Analyze the existing Firebase code and identify:
+
+Which Firebase service is being used (Auth, Firestore, Storage, Functions, FCM).
+The equivalent Supabase feature (Auth, Postgres tables, Storage, Edge Functions, Realtime).
+What data models need to change for Postgres.
+
+new Supabase schema/tables required (in SQL).
+complete rewritten Supabase-based code.
+Clearly marked TODOs I must do manually (if any).
+Warnings if any logic will break or must be redesigned.
+
+Rules for the generated code:
+
+Use Supabase best practices.
+Use Row Level Security (RLS) when Auth is involved.
+Replace all Firestore queries with SQL-style Supabase queries.
+Replace all Firebase Auth calls with Supabase Auth equivalents.
+Replace Firebase Storage calls with Supabase Storage.
+Replace Firebase Functions with Edge Functions.
+Replace FCM push notification with onesignal so that no need any cloude function.
+overall delete firebase fully from this project.
+
+there are some more bug to fix:
+Currently maybe this system is letting a cr to create mutiple section, but one cr can create only one section at a time
+and create annother only after deleting the section.
+and another is to add a verificaton page after signup and untill user nnot verifyed it should stuck this page and after only email verifyed it goes farther.
+
+no need to create any dummy test code. write the final version at once but the best. at first read my project and plan then do it.
+
+and remember dont change any ui frontend, i just want to shift fully from firebase not to change any ui or any feature.
+
+If the code can be optimized or simplified during migration, show the improved version.

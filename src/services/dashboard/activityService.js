@@ -1,42 +1,17 @@
-// src/services/dashboard/activityService.js - Updated with notification support
-import {
-  collection,
-  doc,
-  setDoc,
-  getDoc,
-  getDocs,
-  query,
-  where,
-  orderBy,
-  updateDoc,
-  deleteDoc,
-  onSnapshot,
-  writeBatch,
-  serverTimestamp,
-  Timestamp,
-  increment
-} from 'firebase/firestore';
-import { db } from '../../config/firebase';
-import sectionService from '../sectionService';
+// src/services/dashboard/activityService.js - Supabase version
+import { supabase } from '../../config/supabase';
 import notificationService from '../notificationService';
 
-
 class ActivityService {
-  constructor() {
-    this.activitiesCollection = 'activities';
-    this.submissionsCollection = 'submissions';
-  }
-
-  // Create new activity (for CRs) - Updated with notification support
+  // Create new activity (for CRs)
   async createActivity(activityData) {
     try {
       console.log('Creating activity with data:', activityData);
 
-      // Validate and safely extract data
       const {
         sectionId,
         crId,
-        crName, // Added for notifications
+        crName,
         title,
         description,
         type,
@@ -47,80 +22,55 @@ class ActivityService {
         status = 'active'
       } = activityData;
 
-      // Validate required fields with proper null checks
-      if (!title || !title.trim()) {
-        throw new Error('Activity title is required');
-      }
-
-      if (!description || !description.trim()) {
-        throw new Error('Activity description is required');
-      }
-
-      if (!sectionId) {
-        throw new Error('Section ID is required');
-      }
-
-      if (!crId) {
-        throw new Error('CR ID is required');
-      }
-
-      if (!dueDate) {
-        throw new Error('Due date is required');
-      }
-
-      const activityId = doc(collection(db, this.activitiesCollection)).id;
+      // Validate required fields
+      if (!title?.trim()) throw new Error('Activity title is required');
+      if (!description?.trim()) throw new Error('Activity description is required');
+      if (!sectionId) throw new Error('Section ID is required');
+      if (!crId) throw new Error('CR ID is required');
+      if (!dueDate) throw new Error('Due date is required');
 
       const processedActivityData = {
-        id: activityId,
-        sectionId: sectionId,
-        crId: crId,
+        section_id: sectionId,
+        cr_id: crId,
         title: title.trim(),
         description: description.trim(),
-        type: type || 'assignment', // 'assignment', 'quiz', 'lab', 'presentation'
-        dueDate: Timestamp.fromDate(new Date(dueDate)),
-        submissionType: submissionType || 'physical', // 'online' or 'physical'
-        submissionLink: submissionType === 'online' && submissionLink ? submissionLink.trim() : null,
-        submissionLocation: submissionType === 'physical' && submissionLocation ? submissionLocation.trim() : null,
-        status: status, // 'active', 'draft', 'archived'
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        submissionCount: 0,
-        completedCount: 0
+        type: type || 'assignment',
+        due_date: new Date(dueDate).toISOString(),
+        submission_type: submissionType || 'physical',
+        submission_link: submissionType === 'online' && submissionLink ? submissionLink.trim() : null,
+        submission_location: submissionType === 'physical' && submissionLocation ? submissionLocation.trim() : null,
+        status: status,
+        submission_count: 0,
+        completed_count: 0
       };
 
-      // Use batch to update both activity and section
-      const batch = writeBatch(db);
+      const { data: activity, error } = await supabase
+        .from('activities')
+        .insert([processedActivityData])
+        .select()
+        .single();
 
-      // Create activity document
-      const activityRef = doc(db, this.activitiesCollection, activityId);
-      batch.set(activityRef, processedActivityData);
+      if (error) throw error;
 
-      // Update section's activity count
-      const sectionRef = doc(db, 'sections', sectionId);
-      batch.update(sectionRef, {
-        activityCount: increment(1),
-        updatedAt: serverTimestamp()
-      });
-
-      await batch.commit();
-
-      console.log('Activity created successfully:', processedActivityData);
+      console.log('Activity created successfully:', activity);
 
       // Create notifications for students (only for active activities)
       if (status === 'active') {
         try {
-          // Get section data to retrieve student list
-          const sectionResult = await sectionService.getSectionById(sectionId);
+          // Get enrolled students
+          const { data: enrollments } = await supabase
+            .from('enrollments')
+            .select('student_id')
+            .eq('section_id', sectionId);
 
-          if (sectionResult.success && sectionResult.section?.enrolledStudents?.length > 0) {
-            // Format due date for notification
+          if (enrollments && enrollments.length > 0) {
+            const studentIds = enrollments.map(e => e.student_id);
             const dueDateFormatted = new Date(dueDate).toLocaleDateString('en-US', {
               month: 'short',
               day: 'numeric',
               year: 'numeric'
             });
 
-            // Create notification title based on activity type
             const typeLabels = {
               'assignment': 'Assignment',
               'quiz': 'Quiz',
@@ -130,7 +80,6 @@ class ActivityService {
 
             const typeLabel = typeLabels[type] || 'Task';
 
-            // In activityService.js, update the notification creation
             await notificationService.createNotificationForSection({
               sectionId: sectionId,
               crId: crId,
@@ -138,21 +87,17 @@ class ActivityService {
               title: `New ${typeLabel} Assigned`,
               message: `${title.trim()} - Due: ${dueDateFormatted}`,
               type: 'task',
-              relatedId: activityId,
-              studentIds: sectionResult.section.enrolledStudents,
-              notifyCR: true // Add this line
+              relatedId: activity.id,
+              studentIds: studentIds,
+              notifyCR: true
             });
-
-
-            console.log('Notifications created for new activity');
           }
         } catch (notificationError) {
-          // Log notification error but don't fail the activity creation
           console.error('Error creating notifications for activity:', notificationError);
         }
       }
 
-      return { success: true, activity: processedActivityData };
+      return { success: true, activity: this.formatActivity(activity) };
     } catch (error) {
       console.error('Error creating activity:', error);
       return { success: false, error: this.getErrorMessage(error) };
@@ -165,42 +110,25 @@ class ActivityService {
       console.log('Loading activities for section:', sectionId);
 
       if (!sectionId) {
-        console.log('No section ID provided');
         return { success: true, activities: [] };
       }
 
-      let q = query(
-        collection(db, this.activitiesCollection),
-        where('sectionId', '==', sectionId),
-        orderBy('dueDate', 'asc')
-      );
+      let query = supabase
+        .from('activities')
+        .select('*')
+        .eq('section_id', sectionId)
+        .order('due_date', { ascending: true });
 
       if (!includeArchived) {
-        q = query(
-          collection(db, this.activitiesCollection),
-          where('sectionId', '==', sectionId),
-          where('status', '!=', 'archived'),
-          orderBy('status'),
-          orderBy('dueDate', 'asc')
-        );
+        query = query.neq('status', 'archived');
       }
 
-      const querySnapshot = await getDocs(q);
-      const activities = [];
+      const { data: activities, error } = await query;
 
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        activities.push({
-          ...data,
-          id: doc.id,
-          dueDate: data.dueDate?.toDate()?.toISOString() || data.dueDate,
-          createdAt: data.createdAt?.toDate()?.toISOString() || data.createdAt,
-          updatedAt: data.updatedAt?.toDate()?.toISOString() || data.updatedAt
-        });
-      });
+      if (error) throw error;
 
-      console.log('Found activities:', activities.length);
-      return { success: true, activities };
+      console.log('Found activities:', activities?.length || 0);
+      return { success: true, activities: activities.map(a => this.formatActivity(a)) };
     } catch (error) {
       console.error('Error getting activities:', error);
       return { success: false, error: this.getErrorMessage(error), activities: [] };
@@ -215,39 +143,30 @@ class ActivityService {
         return null;
       }
 
-      let q = query(
-        collection(db, this.activitiesCollection),
-        where('sectionId', '==', sectionId),
-        orderBy('dueDate', 'asc')
-      );
+      let query = supabase
+        .channel('activities-changes')
+        .on('postgres_changes', 
+          { 
+            event: '*', 
+            schema: 'public', 
+            table: 'activities',
+            filter: `section_id=eq.${sectionId}`
+          }, 
+          async (payload) => {
+            console.log('Activity change detected:', payload);
+            // Refetch all activities
+            const result = await this.getActivitiesBySection(sectionId, includeArchived);
+            callback(result);
+          }
+        )
+        .subscribe();
 
-      if (!includeArchived) {
-        q = query(
-          collection(db, this.activitiesCollection),
-          where('sectionId', '==', sectionId),
-          where('status', '!=', 'archived'),
-          orderBy('status'),
-          orderBy('dueDate', 'asc')
-        );
-      }
+      // Initial load
+      this.getActivitiesBySection(sectionId, includeArchived).then(callback);
 
-      return onSnapshot(q, (querySnapshot) => {
-        const activities = [];
-        querySnapshot.forEach((doc) => {
-          const data = doc.data();
-          activities.push({
-            ...data,
-            id: doc.id,
-            dueDate: data.dueDate?.toDate()?.toISOString() || data.dueDate,
-            createdAt: data.createdAt?.toDate()?.toISOString() || data.createdAt,
-            updatedAt: data.updatedAt?.toDate()?.toISOString() || data.updatedAt
-          });
-        });
-        callback({ success: true, activities });
-      }, (error) => {
-        console.error('Error in activities subscription:', error);
-        callback({ success: false, error: this.getErrorMessage(error) });
-      });
+      return () => {
+        supabase.removeChannel(query);
+      };
     } catch (error) {
       console.error('Error setting up activities subscription:', error);
       return null;
@@ -257,36 +176,30 @@ class ActivityService {
   // Update activity
   async updateActivity(activityId, updates) {
     try {
-      const activityRef = doc(db, this.activitiesCollection, activityId);
+      const updateData = { ...updates };
 
-      const updateData = {
-        ...updates,
-        updatedAt: serverTimestamp()
-      };
-
-      // Safely handle string fields
-      if (updates.title !== undefined) {
-        updateData.title = (updates.title || '').trim();
-      }
-
-      if (updates.description !== undefined) {
-        updateData.description = (updates.description || '').trim();
-      }
-
+      // Format field names for database
+      if (updates.title !== undefined) updateData.title = updates.title.trim();
+      if (updates.description !== undefined) updateData.description = updates.description.trim();
       if (updates.submissionLink !== undefined) {
-        updateData.submissionLink = updates.submissionLink ? updates.submissionLink.trim() : null;
+        updateData.submission_link = updates.submissionLink ? updates.submissionLink.trim() : null;
+        delete updateData.submissionLink;
       }
-
       if (updates.submissionLocation !== undefined) {
-        updateData.submissionLocation = updates.submissionLocation ? updates.submissionLocation.trim() : null;
+        updateData.submission_location = updates.submissionLocation ? updates.submissionLocation.trim() : null;
+        delete updateData.submissionLocation;
       }
-
-      // Convert dueDate if provided
       if (updates.dueDate) {
-        updateData.dueDate = Timestamp.fromDate(new Date(updates.dueDate));
+        updateData.due_date = new Date(updates.dueDate).toISOString();
+        delete updateData.dueDate;
       }
 
-      await updateDoc(activityRef, updateData);
+      const { error } = await supabase
+        .from('activities')
+        .update(updateData)
+        .eq('id', activityId);
+
+      if (error) throw error;
 
       console.log('Activity updated successfully');
       return { success: true };
@@ -299,22 +212,12 @@ class ActivityService {
   // Delete activity
   async deleteActivity(activityId, sectionId) {
     try {
-      const batch = writeBatch(db);
+      const { error } = await supabase
+        .from('activities')
+        .delete()
+        .eq('id', activityId);
 
-      // Delete activity document
-      const activityRef = doc(db, this.activitiesCollection, activityId);
-      batch.delete(activityRef);
-
-      // Update section's activity count
-      if (sectionId) {
-        const sectionRef = doc(db, 'sections', sectionId);
-        batch.update(sectionRef, {
-          activityCount: increment(-1),
-          updatedAt: serverTimestamp()
-        });
-      }
-
-      await batch.commit();
+      if (error) throw error;
 
       console.log('Activity deleted successfully');
       return { success: true };
@@ -341,15 +244,15 @@ class ActivityService {
         };
       }
 
-      const q = query(
-        collection(db, this.activitiesCollection),
-        where('sectionId', '==', sectionId),
-        where('status', '!=', 'archived')
-      );
+      const { data: activities, error } = await supabase
+        .from('activities')
+        .select('*')
+        .eq('section_id', sectionId)
+        .neq('status', 'archived');
 
-      const querySnapshot = await getDocs(q);
+      if (error) throw error;
+
       const now = new Date();
-
       let stats = {
         total: 0,
         active: 0,
@@ -364,27 +267,24 @@ class ActivityService {
         }
       };
 
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        const dueDate = data.dueDate?.toDate();
+      activities.forEach(activity => {
+        const dueDate = new Date(activity.due_date);
 
         stats.total++;
-        stats.byType[data.type] = (stats.byType[data.type] || 0) + 1;
+        stats.byType[activity.type] = (stats.byType[activity.type] || 0) + 1;
 
-        if (data.status === 'active') {
+        if (activity.status === 'active') {
           stats.active++;
 
-          if (dueDate) {
-            const diffTime = dueDate.getTime() - now.getTime();
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          const diffTime = dueDate.getTime() - now.getTime();
+          const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-            if (diffDays < 0) {
-              stats.overdue++;
-            } else if (diffDays === 0) {
-              stats.dueToday++;
-            } else if (diffDays <= 7) {
-              stats.dueThisWeek++;
-            }
+          if (diffDays < 0) {
+            stats.overdue++;
+          } else if (diffDays === 0) {
+            stats.dueToday++;
+          } else if (diffDays <= 7) {
+            stats.dueThisWeek++;
           }
         }
       });
@@ -399,52 +299,66 @@ class ActivityService {
   // Get single activity by ID
   async getActivity(activityId) {
     try {
-      const activityRef = doc(db, this.activitiesCollection, activityId);
-      const activityDoc = await getDoc(activityRef);
+      const { data: activity, error } = await supabase
+        .from('activities')
+        .select('*')
+        .eq('id', activityId)
+        .single();
 
-      if (activityDoc.exists()) {
-        const data = activityDoc.data();
-        const activity = {
-          ...data,
-          id: activityDoc.id,
-          dueDate: data.dueDate?.toDate()?.toISOString() || data.dueDate,
-          createdAt: data.createdAt?.toDate()?.toISOString() || data.createdAt,
-          updatedAt: data.updatedAt?.toDate()?.toISOString() || data.updatedAt
-        };
-        return { success: true, activity };
-      } else {
-        return { success: false, error: 'Activity not found' };
+      if (error) {
+        if (error.code === 'PGRST116') {
+          return { success: false, error: 'Activity not found' };
+        }
+        throw error;
       }
+
+      return { success: true, activity: this.formatActivity(activity) };
     } catch (error) {
       console.error('Error getting activity:', error);
       return { success: false, error: this.getErrorMessage(error) };
     }
   }
 
+  // Helper: Format activity data
+  formatActivity(activity) {
+    if (!activity) return null;
+
+    return {
+      id: activity.id,
+      sectionId: activity.section_id,
+      crId: activity.cr_id,
+      title: activity.title,
+      description: activity.description,
+      type: activity.type,
+      dueDate: activity.due_date,
+      submissionType: activity.submission_type,
+      submissionLink: activity.submission_link,
+      submissionLocation: activity.submission_location,
+      status: activity.status,
+      submissionCount: activity.submission_count,
+      completedCount: activity.completed_count,
+      createdAt: activity.created_at,
+      updatedAt: activity.updated_at
+    };
+  }
+
   // Helper method to format error messages
   getErrorMessage(error) {
-    console.error('Firebase error details:', error);
+    console.error('Supabase error details:', error);
 
     if (error.code) {
       switch (error.code) {
-        case 'permission-denied':
+        case '23505':
+          return 'This record already exists.';
+        case '23503':
+          return 'Related record not found.';
+        case '42501':
+        case 'PGRST301':
           return 'Permission denied. Please make sure you are logged in and have the right permissions.';
-        case 'not-found':
+        case 'PGRST116':
           return 'The requested data was not found.';
-        case 'unavailable':
-          return 'Service is temporarily unavailable. Please try again later.';
-        case 'deadline-exceeded':
-          return 'Request timeout. Please check your connection and try again.';
-        case 'resource-exhausted':
-          return 'Too many requests. Please wait a moment and try again.';
-        case 'unauthenticated':
-          return 'Authentication required. Please log in again.';
-        case 'invalid-argument':
-          return 'Invalid request. Please check your input and try again.';
-        case 'aborted':
-          return 'Operation was aborted. Please try again.';
         default:
-          return `An error occurred: ${error.message || 'Unknown error'}`;
+          return error.message || 'An unexpected error occurred. Please try again.';
       }
     }
 
